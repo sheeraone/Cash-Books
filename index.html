@@ -28,15 +28,20 @@
                     <h1 class="text-2xl font-bold">Cash Books</h1>
                     <p class="text-sm opacity-80">Manage your multiple fee accounts</p>
                 </div>
-                <div id="cloudStatus" class="text-xs bg-blue-800 px-2.5 py-1 rounded-full text-blue-200 hidden">
-                    Syncing...
+                <div class="flex items-center space-x-2">
+                    <button onclick="fetchDataFromCloud(true)" title="Force Refresh" class="bg-blue-800 hover:bg-blue-700 p-2 rounded-xl text-xs flex items-center space-x-1 border border-blue-600 transition">
+                        <span id="syncIcon" class="inline-block">🔄</span>
+                    </button>
+                    <div id="cloudStatus" class="text-xs bg-blue-800 px-2.5 py-1 rounded-full text-blue-200 hidden">
+                        Syncing...
+                    </div>
                 </div>
             </header>
             
             <div class="p-6 space-y-4">
-                <!-- Sync banner notice if cloud is not connected -->
+                <!-- Sync banner notice if cloud URL is missing -->
                 <div id="syncNotice" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                    💡 <strong>Local Mode Active:</strong> Data is saved in your browser. To sync across devices, paste your Google Web App URL into <code>SCRIPT_URL</code> in line 222.
+                    💡 <strong>Local Mode Active:</strong> Data is saved in browser. Add your Web App URL to <code>SCRIPT_URL</code> in line 220 to enable cloud sync.
                 </div>
 
                 <div id="categoryList" class="space-y-3">
@@ -56,7 +61,12 @@
         <!-- Dashboard View -->
         <div id="dashboardView" class="hidden">
             <header class="bg-darkBlue text-white p-6 rounded-b-3xl">
-                <button onclick="goBack()" class="mb-2 opacity-80 text-sm hover:opacity-100">⬅️ Back</button>
+                <div class="flex justify-between items-center mb-2">
+                    <button onclick="goBack()" class="opacity-80 text-sm hover:opacity-100">⬅️ Back</button>
+                    <button onclick="fetchDataFromCloud(true)" title="Force Refresh" class="bg-blue-800 hover:bg-blue-700 px-3 py-1 rounded-xl text-xs flex items-center space-x-1 border border-blue-600 transition">
+                        <span>🔄 Sync Now</span>
+                    </button>
+                </div>
                 <div class="flex justify-between items-center">
                     <h1 class="text-2xl font-bold" id="categoryTitle">Dashboard</h1>
                     <button onclick="deleteCurrentCategory()" class="bg-red-500/30 hover:bg-red-500 text-xs px-3 py-1.5 rounded-lg border border-red-400 transition">Delete Book</button>
@@ -119,7 +129,7 @@
                         <button onclick="clearDateFilter()" class="text-xs text-red-600 hover:underline font-semibold">Reset Filter</button>
                     </div>
 
-                    <!-- Filter Type Selector (Income / Expense / All) -->
+                    <!-- Filter Type Selector -->
                     <div class="mb-3 grid grid-cols-3 gap-1 bg-white p-1 rounded-xl border border-gray-200 shadow-inner">
                         <button id="btnFilterAll" onclick="setFilterType('all')" class="py-1.5 text-xs font-bold rounded-lg transition bg-darkBlue text-white shadow-sm">All</button>
                         <button id="btnFilterIncome" onclick="setFilterType('income')" class="py-1.5 text-xs font-bold rounded-lg transition text-gray-600 hover:bg-gray-100">Income Only</button>
@@ -204,7 +214,7 @@
         </div>
     </div>
 
-    <!-- Custom Confirmation Modal -->
+    <!-- Confirm Modal -->
     <div id="confirmModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-2xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
             <p id="confirmMessage" class="text-gray-700 font-medium"></p>
@@ -216,7 +226,7 @@
     </div>
 
     <script>
-        // 👇 Replace this with your actual Google Apps Script Web App URL when deployed:
+        // 👇 PASTE YOUR GOOGLE WEB APP URL HERE:
         const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby5OMNph7rgWBmlrBDsuSkcU4QqXxn6V7lXpe9WEXQLpFA9nrVBh7Qi3uY4PjARBQ2U6Q/exec';
 
         let currentCategory = null;
@@ -225,17 +235,53 @@
         let filterFrom = null;
         let filterTo = null;
         let filterType = 'all'; // 'all', 'income', 'expense'
+        let autoSyncTimer = null;
 
-        // Check if SCRIPT_URL is set to a real deployment URL
         function isScriptConfigured() {
             return SCRIPT_URL && 
                    SCRIPT_URL.includes('script.google.com') && 
                    !SCRIPT_URL.includes('YOUR_DEPLOYED_ID_HERE');
         }
 
-        // Load initial data on startup (LocalStorage fallback + Google Apps Script sync)
+        function fetchDataFromCloud(manualTrigger = false) {
+            const syncIcon = document.getElementById('syncIcon');
+            if (syncIcon && manualTrigger) syncIcon.classList.add('animate-spin');
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(data) {
+                    if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                        categoryData = data;
+                        renderCategories();
+                        if (currentCategory) {
+                            updateDashboard();
+                            renderTransactions();
+                        }
+                    }
+                    if (syncIcon) syncIcon.classList.remove('animate-spin');
+                }).getData();
+            } else if (isScriptConfigured()) {
+                fetch(SCRIPT_URL + '?action=getData&t=' + Date.now(), { redirect: 'follow' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                            categoryData = data;
+                            renderCategories();
+                            if (currentCategory) {
+                                updateDashboard();
+                                renderTransactions();
+                            }
+                        }
+                    })
+                    .catch(err => console.warn("Cloud sync error:", err.message))
+                    .finally(() => {
+                        if (syncIcon) syncIcon.classList.remove('animate-spin');
+                    });
+            } else {
+                if (syncIcon) syncIcon.classList.remove('animate-spin');
+            }
+        }
+
         window.onload = function() {
-            // 1. Always load LocalStorage immediately as baseline
             try {
                 const localData = localStorage.getItem('finance_category_data');
                 if (localData) {
@@ -246,31 +292,14 @@
             }
             renderCategories();
 
-            // 2. Sync with Google Apps Script if available and configured
-            if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(function(data) {
-                    if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-                        categoryData = data;
-                        renderCategories();
-                    }
-                }).getData();
-            } else if (isScriptConfigured()) {
-                fetch(SCRIPT_URL + '?action=getData', { redirect: 'follow' })
-                    .then(res => {
-                        if (!res.ok) throw new Error('Network error: ' + res.status);
-                        return res.json();
-                    })
-                    .then(data => {
-                        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-                            categoryData = data;
-                            renderCategories();
-                        }
-                    })
-                    .catch(err => {
-                        console.warn("Cloud sync unavailable, using local data:", err.message);
-                    });
-            } else {
-                // Show gentle sync notice if SCRIPT_URL is placeholder
+            fetchDataFromCloud();
+
+            if (autoSyncTimer) clearInterval(autoSyncTimer);
+            autoSyncTimer = setInterval(function() {
+                fetchDataFromCloud(false);
+            }, 8000);
+
+            if (!isScriptConfigured()) {
                 const noticeEl = document.getElementById('syncNotice');
                 if (noticeEl) noticeEl.classList.remove('hidden');
             }
@@ -280,16 +309,14 @@
             const statusEl = document.getElementById('cloudStatus');
             if (statusEl) statusEl.classList.remove('hidden');
 
-            // Save to LocalStorage
             try {
                 localStorage.setItem('finance_category_data', JSON.stringify(categoryData));
             } catch(e) {
                 console.warn("LocalStorage save error:", e);
             }
 
-            // Sync with Google Cloud
             if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(function(response) {
+                google.script.run.withSuccessHandler(function() {
                     if (statusEl) statusEl.classList.add('hidden');
                 }).withFailureHandler(function(err) {
                     console.error("Cloud sync error:", err);
@@ -606,7 +633,6 @@
             }
         }
 
-        // Export to Excel (.xlsx)
         function exportToExcel(title, data) {
             const formattedData = data.map(t => ({
                 "Date": t.date,
@@ -642,14 +668,12 @@
             XLSX.writeFile(workbook, `${title}_${filterType.toUpperCase()}_Report.xlsx`);
         }
 
-        // Export to PDF (.pdf)
         function exportToPDF(title, data) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
 
             const scopeTag = filterType === 'income' ? ' (Income Only)' : (filterType === 'expense' ? ' (Expense Only)' : ' (All Transactions)');
 
-            // Header Title
             doc.setFontSize(16);
             doc.text(`${title} - Financial Statement${scopeTag}`, 14, 18);
 
@@ -661,7 +685,6 @@
             }
             doc.text(periodText, 14, 25);
 
-            // Table Data
             const tableColumn = ["Date", "Description", "Type", "Payment Mode", "Amount (INR)"];
             const tableRows = [];
 
@@ -688,7 +711,6 @@
                 styles: { fontSize: 9 }
             });
 
-            // Calculate Summary Totals
             const income = data.filter(t => t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
             const expense = data.filter(t => t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
             const totalCash = data.reduce((acc, curr) => {
